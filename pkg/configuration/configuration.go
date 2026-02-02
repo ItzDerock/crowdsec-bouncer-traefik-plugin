@@ -108,6 +108,8 @@ type Config struct {
 	CaptchaSecretKey                           string   `json:"captchaSecretKey,omitempty"`
 	CaptchaSecretKeyFile                       string   `json:"captchaSecretKeyFile,omitempty"`
 	CaptchaGracePeriodSeconds                  int64    `json:"captchaGracePeriodSeconds,omitempty"`
+	BypassHosts                                []string `json:"bypassHosts,omitempty"`
+	BypassRoutes                               []string `json:"bypassRoutes,omitempty"`
 }
 
 func contains(source []string, target string) bool {
@@ -166,6 +168,8 @@ func New() *Config {
 		RedisCachePassword:              "",
 		RedisCacheDatabase:              "",
 		RedisCacheUnreachableBlock:      true,
+		BypassHosts:                     []string{},
+		BypassRoutes:                    []string{},
 	}
 }
 

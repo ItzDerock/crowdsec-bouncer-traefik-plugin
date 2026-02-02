@@ -92,6 +92,8 @@ type Bouncer struct {
 	appsecFailureBlock      bool
 	appsecUnreachableBlock  bool
 	appsecBodyLimit         int64
+	bypassRoutes            []string
+	bypassHosts             []string
 	crowdsecScheme          string
 	crowdsecHost            string
 	crowdsecPath            string
@@ -193,6 +195,8 @@ func New(_ context.Context, next http.Handler, config *configuration.Config, nam
 		name:     name,
 		template: template.New("CrowdsecBouncer").Delims("[[", "]]"),
 
+		bypassRoutes:            config.BypassRoutes,
+		bypassHosts:             config.BypassHosts,
 		enabled:                 config.Enabled,
 		crowdsecMode:            config.CrowdsecMode,
 		appsecEnabled:           config.CrowdsecAppsecEnabled,
@@ -320,6 +324,16 @@ func (bouncer *Bouncer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	// If this instance has bypass routes configured and the request URL.Path
+	// matches one of them, short-circuit and forward the request directly to
+	// the next handler (useful to exempt some routes while the bouncer is
+	// attached to a global entrypoint).
+	if bouncer.isBypassed(req) {
+		bouncer.log.Debug(fmt.Sprintf("ServeHTTP:request bypassed path:%s", req.URL.Path))
+		bouncer.next.ServeHTTP(rw, req)
+		return
+	}
+
 	// Here we check for the trusted IPs in the forwardedCustomHeader
 	remoteIP, err := ip.GetRemoteIP(req, bouncer.serverPoolStrategy, bouncer.forwardedCustomHeader)
 	if err != nil {
@@ -394,8 +408,46 @@ func (bouncer *Bouncer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 }
 
-// CUSTOM CODE.
-// TODO place in another file.
+// isBypassed checks whether the incoming request should skip bouncer logic
+// based on configured path prefixes in the plugin instance.
+// isBypassed returns true if the incoming request matches any configured
+// bypass host or path prefix for this middleware instance.
+// Hostnames are matched against the request Host (port stripped) using a
+// case-insensitive comparison. Path prefixes are matched using simple
+// strings.HasPrefix.
+func (bouncer *Bouncer) isBypassed(req *http.Request) bool {
+	// Check hosts first (allow exact host match, case-insensitive).
+	if len(bouncer.bypassHosts) > 0 {
+		host := req.Host
+		if host != "" {
+			if idx := strings.Index(host, ":"); idx != -1 {
+				host = host[:idx]
+			}
+			for _, h := range bouncer.bypassHosts {
+				if h == "" {
+					continue
+				}
+				if strings.EqualFold(host, h) {
+					return true
+				}
+			}
+		}
+	}
+
+	if len(bouncer.bypassRoutes) == 0 {
+		return false
+	}
+	path := req.URL.Path
+	for _, prefix := range bouncer.bypassRoutes {
+		if prefix == "" {
+			continue
+		}
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
+}
 
 // Decision Body returned from Crowdsec LAPI.
 type Decision struct {
